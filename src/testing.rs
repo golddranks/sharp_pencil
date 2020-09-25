@@ -1,7 +1,7 @@
 //! This module implements test support helpers.
 
-use app::Pencil;
-use wrappers::{Request, Response};
+use crate::app::Pencil;
+use crate::wrappers::{Request, Response};
 
 
 /// This type allows to send requests to a wrapped application.

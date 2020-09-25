@@ -1,25 +1,24 @@
 //! This module implements various helpers.
 
-use std::error::Error;
-use std::fs::File;
+use std::{fs::File, ops::Bound};
 use std::path::{Path, PathBuf};
-
 use std::io::{Seek, Read};
-use std::io::SeekFrom::{End, Start};          
-use hyper::header::{Location, ContentType, Range, ContentRange, ContentLength};
-use hyper::header::ByteRangeSpec::{FromTo, Last, AllFrom};
-use hyper::header::ContentRangeSpec::{Bytes};
+use std::io::SeekFrom::Start; 
 
-use mime_guess::guess_mime_type;
+use futures_util::TryStreamExt;
+use hyper::{Body, header::{LOCATION, CONTENT_DISPOSITION}};
+
+use headers::{ContentLength, ContentRange, ContentType, HeaderMapExt, HeaderValue, Range};
+
 use mime::Mime;
 
-use wrappers::Response;
-use types::{
+use crate::wrappers::Response;
+use crate::types::{
     PenHTTPError,
     PencilResult,
     UserError,
 };
-use http_errors::{
+use crate::http_errors::{
     HTTPError,
         NotFound,
 };
@@ -90,7 +89,7 @@ pub fn redirect(location: &str, code: u16) -> PencilResult {
 ", location, location));
     response.status_code = code;
     response.set_content_type("text/html");
-    response.headers.set(Location(location.to_string()));
+    response.headers.insert(LOCATION, HeaderValue::from_str(&location).expect("TODO"));
     Ok(response)
 }
 
@@ -113,18 +112,18 @@ pub fn send_file(filepath: &str, mimetype: Mime, as_attachment: bool) -> PencilR
     let file = match File::open(&filepath) {
         Ok(file) => file,
         Err(e) => {
-            return Err(UserError::new(format!("couldn't open {}: {}", filepath.display(), e.description())).into());
+            return Err(UserError::new(format!("couldn't open {}: {}", filepath.display(), e)).into());
         }
     };
     let mut response: Response = file.into();
-    response.headers.set(ContentType(mimetype));
+    response.headers.typed_insert(ContentType::from(mimetype));
     if as_attachment {
         match filepath.file_name() {
             Some(file) => {
                 match file.to_str() {
                     Some(filename) => {
                         let content_disposition = format!("attachment; filename={}", filename);
-                        response.headers.set_raw("Content-Disposition", vec![content_disposition.as_bytes().to_vec()]);
+                        response.headers.insert(CONTENT_DISPOSITION, HeaderValue::from_str(&content_disposition).expect("TODO"));
                     },
                     None => {
                         return Err(UserError::new("filename unavailable, required for sending as attachment.").into());
@@ -156,66 +155,62 @@ pub fn send_file_range(filepath: &str, mimetype: Mime, as_attachment: bool, rang
     let mut file = match File::open(&filepath) {
         Ok(file) => file,
         Err(e) => {
-            return Err(UserError::new(format!("couldn't open {}: {}", filepath.display(), e.description())).into());
+            return Err(UserError::new(format!("couldn't open {}: {}", filepath.display(), e)).into());
         }
     };
 
     let len = file.metadata().map_err(|_| PenHTTPError(HTTPError::InternalServerError))?.len();
+    let mut buf = Vec::new();
     let mut response: Response = match range {
-        Some(&Range::Bytes(ref vec_ranges)) => {
-            if vec_ranges.len() != 1 { return Err(PenHTTPError(HTTPError::NotImplemented)) };
-            match vec_ranges[0] {
-                FromTo(s, e) => {
-                    file.seek(Start(s))
-                        .map_err(|_| PenHTTPError(HTTPError::InternalServerError))?;
-                    let mut resp = Response::new(file.take(e-s+1));
-                    resp.status_code = 206;
-                    resp.headers.set(ContentLength(e-s+1));
-                    resp.headers.set(ContentRange(
-                        Bytes{range: Some((s, e)), instance_length: Some(len)}
-                    ));
-                    resp
-                },
-                AllFrom(s) => {
-                    file.seek(Start(s))
-                        .map_err(|_| PenHTTPError(HTTPError::InternalServerError))?;
-                    let mut resp = Response::new(file);
-                    resp.status_code = 206;
-                    resp.headers.set(ContentLength(len-s));
-                    resp.headers.set(ContentRange(
-                        Bytes{range: Some((s, len-1)), instance_length: Some(len)}
-                    ));
-                    resp
-                },
-                Last(l) => {
-                    file.seek(End(-(l as i64)))
-                        .map_err(|_| PenHTTPError(HTTPError::InternalServerError))?;
-                    let mut resp = Response::new(file);
-                    resp.status_code = 206;
-                    resp.headers.set(ContentLength(l));
-                    resp.headers.set(ContentRange(
-                        Bytes{range: Some((len-l, len-1)), instance_length: Some(len)}
-                    ));
-                    resp
-                },
+        Some(range) => {
+            let mut range_iter = range.iter();
+            let one_range = (range_iter.next(), range_iter.next());
+            if let (Some((start, end)), None) = one_range {
+                let start = match start {
+                    Bound::Unbounded => 0,
+                    Bound::Included(start) => start,
+                    Bound::Excluded(start) => start+1,
+                    // TODO The suffix-length isn't taken into account by the headers library?
+                };
+                file.seek(Start(start))
+                    .map_err(|_| PenHTTPError(HTTPError::InternalServerError))?;
+
+                let end = match end {
+                    Bound::Unbounded => len,
+                    Bound::Included(end) => end+1,
+                    Bound::Excluded(end) => end,
+                };
+                file.take(end-start).read_to_end(&mut buf).expect("TODO");
+
+                let content_len = buf.len() as u64;
+                let mut resp = Response::new(Body::from(buf));
+                resp.status_code = 206;
+                resp.headers.typed_insert(ContentLength(content_len));
+                resp.headers.typed_insert(ContentRange::bytes(start..end, content_len).expect("TODO"));
+                resp
+            } else {
+                file.read_to_end(&mut buf).expect("TODO");
+                let mut resp = Response::new(Body::from(buf));
+                resp.headers.typed_insert(ContentLength(len));
+                resp
             }
         },
-        Some(_) => return Err(PenHTTPError(HTTPError::NotImplemented)),
         None => {
-            let mut resp = Response::new(file);
-            resp.headers.set(ContentLength(len));
+            file.read_to_end(&mut buf).expect("TODO");
+            let mut resp = Response::new(Body::from(buf));
+            resp.headers.typed_insert(ContentLength(len));
             resp
         },
     };
 
-    response.headers.set(ContentType(mimetype));
+    response.headers.typed_insert(ContentType::from(mimetype));
     if as_attachment {
         match filepath.file_name() {
             Some(file) => {
                 match file.to_str() {
                     Some(filename) => {
                         let content_disposition = format!("attachment; filename={}", filename);
-                        response.headers.set_raw("Content-Disposition", vec![content_disposition.as_bytes().to_vec()]);
+                        response.headers.insert(CONTENT_DISPOSITION, HeaderValue::from_str(&content_disposition).expect("TODO"));
                     },
                     None => {
                         return Err(UserError::new("filename unavailable, required for sending as attachment.").into());
@@ -238,7 +233,7 @@ pub fn send_from_directory(directory: &str, filename: &str,
                            as_attachment: bool) -> PencilResult {
     match safe_join(directory, filename) {
         Some(filepath) => {
-            let mimetype = guess_mime_type(filepath.as_path());
+            let mimetype = mime_guess::from_path(filepath.as_path()).first_or_octet_stream();
             match filepath.as_path().to_str() {
                 Some(filepath) => {
                     send_file(filepath, mimetype, as_attachment)
@@ -264,7 +259,7 @@ pub fn send_from_directory_range(directory: &str, filename: &str,
 {
     match safe_join(directory, filename) {
         Some(filepath) => {
-            let mimetype = guess_mime_type(filepath.as_path());
+            let mimetype = mime_guess::from_path(filepath.as_path()).first_or_octet_stream();
             match filepath.as_path().to_str() {
                 Some(filepath) => {
                     send_file_range(filepath, mimetype, as_attachment, range)
@@ -278,4 +273,11 @@ pub fn send_from_directory_range(directory: &str, filename: &str,
             Err(PenHTTPError(NotFound))
         }
     }
+}
+
+pub async fn load_body(body: &mut Body) -> Result<Vec<u8>, hyper::Error> {
+    body.try_fold(Vec::new(), |mut buf, chunk| async move {
+        buf.extend(chunk);
+        Ok(buf)
+    }).await
 }

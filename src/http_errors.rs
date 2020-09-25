@@ -1,13 +1,14 @@
 //! This module implements a number of http errors.
 
-use std::error::Error;
+use std::{error::Error, iter::FromIterator};
 use std::fmt;
 
 use hyper;
-use hyper::method::Method;
+use hyper::Method;
+use headers::{HeaderMapExt, Allow};
 
-use httputils::get_name_by_http_code;
-use wrappers::Response;
+use crate::httputils::get_name_by_http_code;
+use crate::wrappers::Response;
 
 pub use self::HTTPError::{
     BadRequest,
@@ -233,8 +234,8 @@ impl HTTPError {
         let mut response = Response::from(self.get_body());
         response.status_code = self.code();
         response.set_content_type("text/html");
-        if let MethodNotAllowed(Some(ref valid_methods)) = *self {
-            response.headers.set(hyper::header::Allow(valid_methods.clone()));
+        if let MethodNotAllowed(Some(valid_methods)) = self {
+            response.headers.typed_insert(Allow::from_iter(valid_methods.iter().cloned()));
         }
         response
     }

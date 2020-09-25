@@ -3,11 +3,10 @@
 use std::collections::HashMap;
 use std::error;
 use std::convert;
-use std::error::Error;
 use std::fmt;
 
-use wrappers::{Request, Response};
-pub use http_errors::HTTPError;
+use crate::wrappers::{Request, Response};
+pub use crate::http_errors::HTTPError;
 
 pub use self::PencilError::{
     PenHTTPError,
@@ -64,24 +63,17 @@ impl convert::From<UserError> for PencilError {
 impl fmt::Display for PencilError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            PenHTTPError(ref err) => f.write_str(err.description()),
-            PenUserError(ref err) => f.write_str(err.description()),
+            PenHTTPError(ref err) => f.write_str(&err.to_string()),
+            PenUserError(ref err) => f.write_str(&err.to_string()),
         }
     }
 }
 
 impl error::Error for PencilError {
 
-    fn description(&self) -> &str {
+    fn cause(&self) -> Option<&dyn error::Error> {
         match *self {
-            PenHTTPError(ref err) => err.description(),
-            PenUserError(ref err) => err.description(),
-        }
-    }
-
-    fn cause(&self) -> Option<&error::Error> {
-        match *self {
-            PenHTTPError(ref err) => Some(&*err as &error::Error),
+            PenHTTPError(ref err) => Some(&*err as &dyn error::Error),
             PenUserError(_) => None,
         }
     }
@@ -99,17 +91,17 @@ pub type ViewFunc = fn(&mut Request) -> PencilResult;
 
 
 /// HTTP Error handler type.
-pub type HTTPErrorHandler = Fn(HTTPError) -> PencilResult + Send + Sync;
+pub type HTTPErrorHandler = dyn Fn(HTTPError) -> PencilResult + Send + Sync;
 /// User Error handler type.
-pub type UserErrorHandler = Fn(UserError) -> PencilResult + Send + Sync;
+pub type UserErrorHandler = dyn Fn(UserError) -> PencilResult + Send + Sync;
 
 /// Before request func type.
-pub type BeforeRequestFunc = Fn(&mut Request) -> Option<PencilResult> + Send + Sync;
+pub type BeforeRequestFunc = dyn Fn(&mut Request) -> Option<PencilResult> + Send + Sync;
 
 
 /// After request func type.
-pub type AfterRequestFunc = Fn(&Request, &mut Response) + Send + Sync;
+pub type AfterRequestFunc = dyn Fn(&Request, &mut Response) + Send + Sync;
 
 
 /// Teardown request func type.
-pub type TeardownRequestFunc = Fn(Option<&PencilError>) + Send + Sync;
+pub type TeardownRequestFunc = dyn Fn(Option<&PencilError>) + Send + Sync;

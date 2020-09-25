@@ -2,50 +2,36 @@
 
 use std::fmt;
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::fs::File;
 use std::io::{self, Read, Write, Take};
 use std::convert;
-use std::cell::RefCell;
 
-use hyper;
-use hyper::server::request::Request as HttpRequest;
-use hyper::uri::RequestUri::{AbsolutePath, AbsoluteUri, Authority, Star};
-use hyper::header::{Headers, ContentLength, ContentType, Cookie, Host};
-use hyper::mime::Mime;
-use hyper::method::Method;
-use hyper::http::h1::HttpReader;
-use hyper::net::NetworkStream;
-use hyper::buffer::BufReader;
-use url::Url;
+use hyper::{self, Method, Body};
+use hyper::Request as HttpRequest;
+use hyper::header::HeaderMap;
+use headers::{ContentLength, ContentType, Cookie, HeaderMapExt, Host, SetCookie};
+use futures_util::StreamExt;
+
+use mime::Mime;
 use url::form_urlencoded;
-use formdata::FilePart;
 use serde_json;
 use typemap::TypeMap;
 
-use app::Pencil;
-use datastructures::MultiDict;
-use httputils::{get_name_by_http_code, get_content_type, get_host_value};
-use httputils::get_status_from_code;
-use routing::{Rule, MapAdapterMatched, MapAdapter};
-use types::ViewArgs;
-use http_errors::HTTPError;
-use formparser::FormDataParser;
+use crate::{app::Pencil, helpers};
+use crate::datastructures::MultiDict;
+use crate::httputils::{get_name_by_http_code, get_content_type};
+use crate::routing::{Rule, MapAdapterMatched, MapAdapter};
+use crate::types::ViewArgs;
+use crate::http_errors::HTTPError;
+use crate::formparser;
 use lazycell::LazyCell;
 
 
 /// Request type.
-pub struct Request<'r, 'a, 'b: 'a> {
+pub struct Request<'r> {
     pub app: &'r Pencil,
-    /// The IP address of the remote connection.
-    pub remote_addr: SocketAddr,
-    /// The request method.
-    pub method: Method,
-    /// The headers of the incoming request.
-    pub headers: Headers,
-    /// The requested url.
-    pub url: Url,
-    /// The URL rule that matched the request.  This is
+    pub request: HttpRequest<Body>,
+    /// The URL rule that matched the request. This is
     /// going to be `None` if nothing matched.
     pub url_rule: Option<Rule>,
     /// A dict of view arguments that matched the request.
@@ -56,21 +42,18 @@ pub struct Request<'r, 'a, 'b: 'a> {
     pub routing_error: Option<HTTPError>,
     /// Storage for data of extensions.
     pub extensions_data: TypeMap,
-    /// The server host
-    pub host: Host,
-    body: RefCell<HttpReader<&'a mut BufReader<&'b mut NetworkStream>>>,
     args: LazyCell<MultiDict<String>>,
     form: LazyCell<MultiDict<String>>,
-    files: LazyCell<MultiDict<FilePart>>,
+    files: LazyCell<MultiDict<Vec<u8>>>,
     cached_json: LazyCell<Option<serde_json::Value>>
 }
 
-impl<'r, 'a, 'b: 'a> Request<'r, 'a, 'b> {
+impl<'r> Request<'r> {
     /// Create a `Request`.
-    pub fn new(app: &'r Pencil, http_request: HttpRequest<'a, 'b>) -> Result<Request<'r, 'a, 'b>, String> {
-        let (remote_addr, method, headers, uri, _, body) = http_request.deconstruct();
-        let host = match headers.get::<hyper::header::Host>() {
-            Some(host) => host.clone(),
+    pub fn new(app: &'r Pencil, request: HttpRequest<Body>) -> Result<Request<'r>, Body> {
+        /* // TODO: do we need this?
+        let host = match request.headers().typed_get::<Host>() {
+            Some(host) => host.to_string(),
             None => {
                 return Err("No host specified in your request".into());
             }
@@ -89,20 +72,15 @@ impl<'r, 'a, 'b: 'a> Request<'r, 'a, 'b> {
             Authority(_) | Star => {
                 return Err("Unsupported request URI".into());
             }
-        };
+        };*/
         Ok(Request {
-            app: app,
-            remote_addr: remote_addr,
-            method: method,
-            headers: headers,
-            url: url,
+            app,
+            request,
             url_rule: None,
             view_args: HashMap::new(),
             routing_redirect: None,
             routing_error: None,
             extensions_data: TypeMap::new(),
-            body: RefCell::new(body),
-            host: host,
             args: LazyCell::new(),
             form: LazyCell::new(),
             files: LazyCell::new(),
@@ -166,106 +144,73 @@ impl<'r, 'a, 'b: 'a> Request<'r, 'a, 'b> {
         self.args.borrow().expect("This is checked to be always filled")
     }
 
-    /// Get content type.
-    fn content_type(&self) -> Option<ContentType> {
-        let content_type: Option<&ContentType> = self.headers.get();
-        content_type.cloned()
-    }
-
     /// Parses the incoming JSON request data.
-    pub fn get_json(&self) -> &Option<serde_json::Value> {
+    pub async fn get_json(&mut self) -> &Option<serde_json::Value> {
         if !self.cached_json.filled() {
-            let mut data = String::from("");
-            let rv = match self.body.borrow_mut().read_to_string(&mut data) {
-                Ok(_) => {
-                    match serde_json::from_str(&data) {
-                        Ok(json) => Some(json),
-                        Err(_) => None
-                    }
-                },
-                Err(_) => {
-                    None
-                }
-            };
+            let body = self.request.body_mut().by_ref();
+            let body_bytes = helpers::load_body(body).await.expect("TODO");
+            let rv = serde_json::from_slice(&body_bytes).ok();
             self.cached_json.fill(rv).expect("This was checked to be empty!");
         }
         self.cached_json.borrow().expect("This is checked to be always filled")
     }
 
     /// This method is used internally to retrieve submitted data.
-    fn load_form_data(&self) {
+    async fn load_form_data(&mut self) -> Result<(), formparser::Error> {
         if self.form.filled() {
-            return
+            return Ok(())
         }
-        let (form, files) = match self.content_type() {
-            Some(ContentType(mimetype)) => {
-                let parser = FormDataParser::new();
-                parser.parse(&mut *self.body.borrow_mut(), &self.headers, &mimetype)
-            },
-            None => {
-                (MultiDict::new(), MultiDict::new())
-            }
-        };
+        let (form, files) = formparser::parse(&mut self.request).await?;
         self.form.fill(form).expect("This was checked to be empty!");
         self.files.fill(files).expect("This was checked to be empty!");
+        Ok(())
     }
 
     /// The form parameters.
-    pub fn form(&self) -> &MultiDict<String> {
-        self.load_form_data();
+    pub async fn form(&mut self) -> &MultiDict<String> {
+        self.load_form_data().await.expect("TODO");
         self.form.borrow().expect("This is always checked to be filled.")
     }
 
     /// All uploaded files.
-    pub fn files(&self) -> &MultiDict<FilePart> {
-        self.load_form_data();
+    pub async fn files(&mut self) -> &MultiDict<Vec<u8>> {
+        self.load_form_data().await.expect("TODO");
         self.files.borrow().expect("This is always checked to be filled.")
     }
 
     /// The headers.
-    pub fn headers(&self) -> &Headers {
-        &self.headers
+    pub fn headers(&self) -> &HeaderMap {
+        &self.request.headers()
     }
 
     /// Requested path.
     pub fn path(&self) -> String {
-        self.url.path().to_owned()
+        self.request.uri().path().to_owned()
     }
 
     /// Requested path including the query string.
     pub fn full_path(&self) -> String {
-        let path = self.path();
-        let query_string = self.query_string();
-        if query_string.is_some() {
-            path + "?" + &query_string.unwrap()
-        } else {
-            path
-        }
+        self.request.uri().path_and_query().expect("TODO").to_string()
     }
 
     /// The host including the port if available.
     pub fn host(&self) -> String {
-        get_host_value(&self.host)
+        self.request.headers().typed_get::<Host>().map(|h| h.to_string()).unwrap_or_default()
     }
 
     /// The query string.
     pub fn query_string(&self) -> Option<String> {
-        self.url.query().map(|q| q.to_owned())
+        self.request.uri().query().map(|q| q.to_owned())
     }
 
     /// The retrieved cookies.
-    pub fn cookies(&self) -> Option<&Cookie> {
-        self.headers.get()
+    pub fn cookies(&self) -> Option<Cookie> {
+        self.request.headers().typed_get::<Cookie>()
     }
 
     /// The request method.
     pub fn method(&self) -> Method {
-        self.method.clone()
-    }
-
-    /// The remote address of the client.
-    pub fn remote_addr(&self) -> SocketAddr {
-        self.remote_addr
+        self.request.method().clone()
     }
 
     /// URL scheme (http or https)
@@ -280,12 +225,12 @@ impl<'r, 'a, 'b: 'a> Request<'r, 'a, 'b> {
 
     /// The current url.
     pub fn url(&self) -> String {
-        self.host_url() + &self.full_path().trim_left_matches('/')
+        self.host_url() + &self.full_path().trim_start_matches('/')
     }
 
     /// The current url without the query string.
     pub fn base_url(&self) -> String {
-        self.host_url() + &self.path().trim_left_matches('/')
+        self.host_url() + &self.path().trim_start_matches('/')
     }
 
     /// Whether the request is secure (https).
@@ -294,21 +239,14 @@ impl<'r, 'a, 'b: 'a> Request<'r, 'a, 'b> {
     }
 }
 
-impl<'r, 'a, 'b: 'a> fmt::Debug for Request<'r, 'a, 'b> {
+impl<'r> fmt::Debug for Request<'r> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "<Pencil Request '{}' {}>", self.url(), self.method())
     }
 }
 
-impl<'r, 'a, 'b: 'a> Read for Request<'r, 'a, 'b> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.body.borrow_mut().read(buf)
-    }
-}
-
-
 /// The response body.
-pub struct ResponseBody<'a>(Box<Write + 'a>);
+pub struct ResponseBody<'a>(Box<dyn Write + 'a>);
 
 impl<'a> ResponseBody<'a> {
     /// Create a new ResponseBody.
@@ -376,12 +314,12 @@ impl BodyWrite for Take<File> {
 pub struct Response {
     /// The HTTP Status code number
     pub status_code: u16,
-    pub headers: Headers,
-    pub body: Option<Box<BodyWrite>>,
+    pub headers: HeaderMap,
+    pub body: Option<Body>,
 }
 
 impl Response {
-    /// Create a `Response`.  By default, the status code is 200
+    /// Create a `Response`. By default, the status code is 200
     /// and content type is "text/html; charset=UTF-8".
     /// Remember to set content length if necessary.
     /// Mostly you should just get a response that is converted
@@ -392,15 +330,14 @@ impl Response {
     /// // Content length is set automatically
     /// let response = Response::from("Hello");
     /// ```
-    pub fn new<T: 'static + BodyWrite>(body: T) -> Response {
+    pub fn new(body: Body) -> Response {
         let mut response = Response {
             status_code: 200,
-            headers: Headers::new(),
-            body: Some(Box::new(body)),
+            headers: HeaderMap::new(),
+            body: Some(body),
         };
         let mime: Mime = "text/html; charset=UTF-8".parse().unwrap();
-        let content_type = ContentType(mime);
-        response.headers.set(content_type);
+        response.headers.typed_insert(ContentType::from(mime));
         response
     }
 
@@ -408,7 +345,7 @@ impl Response {
     pub fn new_empty() -> Response {
         Response {
             status_code: 200,
-            headers: Headers::new(),
+            headers: HeaderMap::new(),
             body: None,
         }
     }
@@ -422,8 +359,8 @@ impl Response {
     }
 
     /// Returns the response content type if available.
-    pub fn content_type(&self) -> Option<&ContentType> {
-        self.headers.get()
+    pub fn content_type(&self) -> Option<ContentType> {
+        self.headers.typed_get::<ContentType>()
     }
 
     /// Set response content type.  If the mimetype passed is a
@@ -432,58 +369,22 @@ impl Response {
     pub fn set_content_type(&mut self, mimetype: &str) {
         let mimetype = get_content_type(mimetype, "UTF-8");
         let mime: Mime = (&mimetype).parse().unwrap();
-        let content_type = ContentType(mime);
-        self.headers.set(content_type);
+        self.headers.typed_insert(ContentType::from(mime));
     }
 
     /// Returns the response content length if available.
     pub fn content_length(&self) -> Option<usize> {
-        let content_length: Option<&ContentLength> = self.headers.get();
-        match content_length {
-            Some(&ContentLength(length)) => Some(length as usize),
-            None => None,
-        }
+        self.headers.typed_get::<ContentLength>().map(|l| l.0 as usize)
     }
 
     /// Set content length.
     pub fn set_content_length(&mut self, value: usize) {
-        let content_length = ContentLength(value as u64);
-        self.headers.set(content_length);
+        self.headers.typed_insert(ContentLength(value as u64));
     }
 
     /// Sets cookie.
-    pub fn set_cookie(&mut self, cookie: hyper::header::SetCookie) {
-        self.headers.set(cookie);
-    }
-
-    /// Write the response out.  Mostly you shouldn't use this directly.
-    #[doc(hidden)]
-    pub fn write(self, request_method: Method, mut res: hyper::server::Response) {
-        // write status.
-        let status_code = self.status_code;
-        *res.status_mut() = get_status_from_code(status_code);
-
-        // write headers.
-        *res.headers_mut() = self.headers;
-
-        // write data.
-        if request_method == Method::Head ||
-           (100 <= status_code && status_code < 200) || status_code == 204 || status_code == 304 {
-            res.headers_mut().set(ContentLength(0));
-            try_return!(res.start().and_then(|w| w.end()));
-        } else {
-            match self.body {
-                Some(mut body) => {
-                    let mut res = try_return!(res.start());
-                    try_return!(body.write_body(&mut ResponseBody::new(&mut res)));
-                    try_return!(res.end());
-                },
-                None => {
-                    res.headers_mut().set(ContentLength(0));
-                    try_return!(res.start().and_then(|w| w.end()));
-                }
-            }
-        }
+    pub fn set_cookie(&mut self, cookie: SetCookie) {
+        self.headers.typed_insert(cookie);
     }
 }
 
@@ -498,7 +399,7 @@ impl convert::From<Vec<u8>> for Response {
     /// automatically.
     fn from(bytes: Vec<u8>) -> Response {
         let content_length = bytes.len();
-        let mut response = Response::new(bytes);
+        let mut response = Response::new(Body::from(bytes));
         response.set_content_length(content_length);
         response
     }
@@ -531,14 +432,16 @@ impl convert::From<String> for Response {
 impl convert::From<File> for Response {
     /// Convert to response body.  The content length is set
     /// automatically if file size is available from metadata.
-    fn from(f: File) -> Response {
+    fn from(mut f: File) -> Response {
         let content_length = match f.metadata() {
             Ok(metadata) => {
                 Some(metadata.len())
             },
             Err(_) => None
         };
-        let mut response = Response::new(f);
+        let mut buf = Vec::new();
+        f.read_to_end(&mut buf).expect("TODO"); // TODO this is blocking!
+        let mut response = Response::new(Body::from(buf));
         if let Some(content_length) = content_length {
             response.set_content_length(content_length as usize);
         }

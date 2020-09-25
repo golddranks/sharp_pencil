@@ -5,17 +5,18 @@ use std::collections::HashMap;
 use std::mem;
 use std::path::PathBuf;
 
-use hyper::method::Method;
+use headers::{HeaderMapExt, Range};
+use hyper::Method;
 
-use http_errors::NotFound;
-use app::Pencil;
-use routing::Matcher;
-use types::ViewFunc;
-use types::{PencilResult, PencilError, HTTPError, UserError};
-use types::{BeforeRequestFunc, AfterRequestFunc, TeardownRequestFunc};
-use types::{HTTPErrorHandler, UserErrorHandler};
-use helpers::send_from_directory_range;
-use wrappers::{Request, Response};
+use crate::http_errors::NotFound;
+use crate::app::Pencil;
+use crate::routing::Matcher;
+use crate::types::ViewFunc;
+use crate::types::{PencilResult, PencilError, HTTPError, UserError};
+use crate::types::{BeforeRequestFunc, AfterRequestFunc, TeardownRequestFunc};
+use crate::types::{HTTPErrorHandler, UserErrorHandler};
+use crate::helpers::send_from_directory_range;
+use crate::wrappers::{Request, Response};
 
 
 /// Represents a module.
@@ -40,7 +41,7 @@ pub struct Module {
     pub http_error_handlers: HashMap<u16, Box<HTTPErrorHandler>>,
     #[doc(hidden)]
     pub user_error_handlers: HashMap<String, Box<UserErrorHandler>>,
-    deferred_functions: Vec<Box<Fn(&mut Pencil) + Send + Sync>>,
+    deferred_functions: Vec<Box<dyn Fn(&mut Pencil) + Send + Sync>>,
     deferred_routes: Vec<(Matcher, Vec<Method>, String, ViewFunc)>,
 }
 
@@ -161,7 +162,7 @@ impl Module {
         if let Some(static_url_path) = static_url_path {
             let mut rule = static_url_path.clone();
             rule = rule + "/<filename:path>";
-            self.route(rule, &[Method::Get], "static", send_module_static_file);
+            self.route(rule, &[Method::GET], "static", send_module_static_file);
         }
         let deferred_routes = mem::replace(&mut self.deferred_routes, Vec::new());
         for (matcher, methods, endpoint, view_func) in deferred_routes {
@@ -186,7 +187,8 @@ fn send_module_static_file(request: &mut Request) -> PencilResult {
                 static_path.push(module_static_folder);
                 let static_path_str = static_path.to_str().unwrap();
                 let filename = request.view_args.get("filename").unwrap();
-                return send_from_directory_range(static_path_str, filename, false, request.headers().get());
+                let range = request.headers().typed_get::<Range>();
+                return send_from_directory_range(static_path_str, filename, false, range.as_ref());
             }
         }
     }

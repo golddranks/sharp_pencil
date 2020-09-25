@@ -1,24 +1,22 @@
 //! This module implements the central application object.
 
-use std::convert::Into;
+use std::{convert::Into, iter::FromIterator, time::SystemTime};
 use std::sync::RwLock;
 use std::fmt;
 use std::collections::HashMap;
-use std::error::Error;
 use std::fs::File;
 use std::path::PathBuf;
 use std::net::ToSocketAddrs;
 
+use headers::{CacheControl, HeaderMapExt, IfModifiedSince, LastModified, Range};
 use serde_json::{Value};
 use serde::Serialize;
 use handlebars::Handlebars;
 use hyper;
-use hyper::method::Method;
-use hyper::status::StatusCode;
-use hyper::server::Request as HTTPRequest;
-use hyper::server::Response as HTTPResponse;
+use hyper::Method;
+use headers::Allow;
 
-use types::{
+use crate::types::{
     PencilError,
         PenHTTPError,
         PenUserError,
@@ -32,25 +30,21 @@ use types::{
     AfterRequestFunc,
     TeardownRequestFunc,
 };
-use wrappers::{
+
+use crate::wrappers::{
     Request,
     Response,
 };
-use helpers::{PathBound, send_from_directory_range, redirect};
-use config::Config;
-use logging;
-use serving::run_server;
-use routing::{Map, Rule, Matcher};
-use testing::PencilClient;
-use http_errors::{HTTPError, NotFound, InternalServerError};
-use templating::{render_template, render_template_string, load_template};
-use module::Module;
+use crate::helpers::{PathBound, send_from_directory_range, redirect};
+use crate::config::Config;
+use crate::logging;
+use crate::serving::run_server;
+use crate::routing::{Map, Rule, Matcher};
+use crate::testing::PencilClient;
+use crate::http_errors::{HTTPError, NotFound, InternalServerError};
+use crate::templating::{render_template, render_template_string, load_template};
+use crate::module::Module;
 use typemap::{ShareMap, Key};
-use hyper::header::{IfModifiedSince, LastModified, HttpDate, CacheControl, CacheDirective};
-use time;
-
-const DEFAULT_THREADS: usize = 15;
-
 
 /// The pencil type.  It acts as the central application object.  Once it is created it
 /// will act as a central registry for the view functions, the URL rules and much more.
@@ -72,7 +66,7 @@ pub struct Pencil {
     /// For storing arbitrary types as "static" data.
     pub extensions: ShareMap,
     /// The Handlebars registry used to load templates and register helpers.
-    pub handlebars_registry: RwLock<Box<Handlebars>>,
+    pub handlebars_registry: RwLock<Box<Handlebars<'static>>>,
     /// The url map for this pencil application.
     pub url_map: Map,
     /// All the attached modules in a hashmap by name.
@@ -178,31 +172,31 @@ impl Pencil {
     /// This is a shortcut for `route`, register a view function for
     /// a given URL rule with just `GET` method (implicitly `HEAD`).
     pub fn get<M: Into<Matcher>>(&mut self, rule: M, endpoint: &str, view_func: ViewFunc) {
-        self.route(rule, &[Method::Get], endpoint, view_func);
+        self.route(rule, &[Method::GET], endpoint, view_func);
     }
 
     /// This is a shortcut for `route`, register a view function for
     /// a given URL rule with just `POST` method.
     pub fn post<M: Into<Matcher>>(&mut self, rule: M, endpoint: &str, view_func: ViewFunc) {
-        self.route(rule, &[Method::Post], endpoint, view_func);
+        self.route(rule, &[Method::POST], endpoint, view_func);
     }
 
     /// This is a shortcut for `route`, register a view function for
     /// a given URL rule with just `DELETE` method.
     pub fn delete<M: Into<Matcher>>(&mut self, rule: M, endpoint: &str, view_func: ViewFunc) {
-        self.route(rule, &[Method::Delete], endpoint, view_func);
+        self.route(rule, &[Method::DELETE], endpoint, view_func);
     }
 
     /// This is a shortcut for `route`, register a view function for
     /// a given URL rule with just `PATCH` method.
     pub fn patch<M: Into<Matcher>>(&mut self, rule: M, endpoint: &str, view_func: ViewFunc) {
-        self.route(rule, &[Method::Patch], endpoint, view_func);
+        self.route(rule, &[Method::PATCH], endpoint, view_func);
     }
 
     /// This is a shortcut for `route`, register a view function for
     /// a given URL rule with just `PUT` method.
     pub fn put<M: Into<Matcher>>(&mut self, rule: M, endpoint: &str, view_func: ViewFunc) {
-        self.route(rule, &[Method::Put], endpoint, view_func);
+        self.route(rule, &[Method::PUT], endpoint, view_func);
     }
 
     /// Connects a URL rule.
@@ -222,7 +216,7 @@ impl Pencil {
         let mut rule = self.static_url_path.clone();
         rule = rule + "/<filename:path>";
         let rule_str: &str = &rule;
-        self.route(rule_str, &[Method::Get], "static", send_app_static_file);
+        self.route(rule_str, &[Method::GET], "static", send_app_static_file);
     }
 
     /// Enables static file handling with caching. (304 Not Modified + Max-Age) The static files are considered
@@ -231,11 +225,10 @@ impl Pencil {
         let mut rule = self.static_url_path.clone();
         rule = rule + "/<filename:path>";
         let rule_str: &str = &rule;
-        let mut tm = time::now_utc();
-        tm.tm_nsec = 0;
+        let tm = SystemTime::now();
         self.extensions.insert::<TimeAtServerStartKey>(tm);
         self.extensions.insert::<MaxAgeKey>(max_age);
-        self.route(rule_str, &[Method::Get], "static", send_app_static_file_with_cache);
+        self.route(rule_str, &[Method::GET], "static", send_app_static_file_with_cache);
     }
 
     /// Registers a function to run before each request.
@@ -429,10 +422,10 @@ impl Pencil {
         if let Some(ref rule) = request.url_rule {
             // if we provide automatic options for this URL and the request
             // came with the OPTIONS method, reply automatically
-            if rule.provide_automatic_options && request.method() == Method::Options {
+            if rule.provide_automatic_options && request.method() == Method::OPTIONS {
                 let url_adapter = request.url_adapter();
                 let mut response = Response::new_empty();
-                response.headers.set(hyper::header::Allow(url_adapter.allowed_methods()));
+                response.headers.typed_insert(Allow::from_iter(url_adapter.allowed_methods()));
                 return Some(response);
             }
         }
@@ -521,7 +514,7 @@ impl Pencil {
 
     /// Logs an error.
     fn log_error(&self, request: &Request, e: &PencilError) {
-        error!("Error on {} [{}]: {}", request.path(), request.method(), e.description());
+        error!("Error on {} [{}]: {}", request.path(), request.method(), e);
     }
 
     /// Dispatches the request and performs request pre and postprocessing
@@ -608,31 +601,8 @@ impl Pencil {
     }
 
     /// Runs the application on a hyper HTTP server.
-    pub fn run<A: ToSocketAddrs>(self, addr: A) {
-        run_server(self, addr, DEFAULT_THREADS);
-    }
-
-    /// Runs the application on a hyper HTTP server.
-    pub fn run_threads<A: ToSocketAddrs>(self, addr: A, threads: usize) {
-        run_server(self, addr, threads);
-    }
-}
-
-impl hyper::server::Handler for Pencil {
-    fn handle(&self, req: HTTPRequest, mut res: HTTPResponse) {
-        debug!("Request: {}", req.uri);
-        match Request::new(self, req) {
-            Ok(mut request) => {
-                let response = self.handle_request(&mut request);
-                response.write(request.method(), res);
-            }
-            Err(_) => {
-                *res.status_mut() = StatusCode::BadRequest;
-                if let Ok(w) = res.start() {
-                    let _ = w.end();
-                }
-            }
-        };
+    pub async fn run<A: ToSocketAddrs>(self, addr: A) {
+        run_server(self, addr).await;
     }
 }
 
@@ -663,7 +633,8 @@ fn send_app_static_file(request: &mut Request) -> PencilResult {
     static_path.push(&request.app.static_folder);
     let static_path_str = static_path.to_str().unwrap();
     let filename = request.view_args.get("filename").unwrap();
-    send_from_directory_range(static_path_str, filename, false, request.headers().get())
+    let range = request.headers().typed_get::<Range>();
+    send_from_directory_range(static_path_str, filename, false, range.as_ref())
 }
 
 
@@ -672,8 +643,10 @@ fn check_if_cached(req: &mut Request) -> Option<PencilResult> {
 
     let mod_time = req.app.extensions.get::<TimeAtServerStartKey>().expect("TimeAtServerStartKey should've been set up.");
 
-    match req.headers().get::<IfModifiedSince>() {
-        Some(&IfModifiedSince(HttpDate(tm))) if tm >= *mod_time => {
+    let mod_since: Option<SystemTime> = req.headers().typed_get::<IfModifiedSince>().map(|m| m.into());
+
+    match mod_since {
+        Some(tm) if tm >= *mod_time => {
             let mut cached_resp = Response::new_empty();
             cached_resp.status_code = 304;
             return Some(Ok(cached_resp));
@@ -696,7 +669,7 @@ impl Key for MaxAgeKey {
 struct TimeAtServerStartKey;
 
 impl Key for TimeAtServerStartKey {
-    type Value = time::Tm;
+    type Value = SystemTime;
 }
 
 /// View function used internally to send static files from the static folder
@@ -709,13 +682,14 @@ fn send_app_static_file_with_cache(request: &mut Request) -> PencilResult {
     static_path.push(&request.app.static_folder);
     let static_path_str = static_path.to_str().unwrap();
     let filename = request.view_args.get("filename").unwrap();
-    let resp = send_from_directory_range(static_path_str, filename, false, request.headers().get());
+    let range = request.headers().typed_get::<Range>();
+    let resp = send_from_directory_range(static_path_str, filename, false, range.as_ref());
     resp.map(|mut r| {
         let mod_time = request.app.extensions.get::<TimeAtServerStartKey>().expect("TimeAtServerStartKey should've been set up.");
-        r.headers.set(LastModified(HttpDate(*mod_time)));
-        let max_age = request.app.extensions.get::<MaxAgeKey>().expect("MaxAgeKey should've been set up.").as_secs();
-        if max_age > 0 {
-            r.headers.set(CacheControl(vec![CacheDirective::MaxAge(max_age as u32)]));
+        r.headers.typed_insert(LastModified::from(*mod_time));
+        let max_age = *request.app.extensions.get::<MaxAgeKey>().expect("MaxAgeKey should've been set up.");
+        if max_age.as_secs() > 0 {
+            r.headers.typed_insert(CacheControl::new().with_max_age(max_age));
         }
         r
     })

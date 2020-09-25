@@ -3,8 +3,8 @@
 use serde::Serialize;
 use serde_json;
 
-use wrappers::{Response};
-use types::{PencilResult, PenUserError, UserError};
+use crate::wrappers::{Response};
+use crate::types::{PencilResult, PenUserError, UserError};
 
 
 /// Creates a view result with the JSON representation of the given object

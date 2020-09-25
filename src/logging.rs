@@ -3,7 +3,7 @@
 use std::env;
 use serde_json::Value;
 
-use app::Pencil;
+use crate::app::Pencil;
 
 
 /// Set global log level based on the application's debug flag.

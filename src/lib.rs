@@ -53,13 +53,14 @@ extern crate serde;
 extern crate serde_json;
 extern crate regex;
 extern crate url;
-extern crate formdata;
 extern crate handlebars;
 extern crate typemap;
 extern crate mime;
 extern crate mime_guess;
 extern crate lazycell;
 extern crate time;
+extern crate headers;
+extern crate multipart;
 
 /* public api */
 pub use app::Pencil;
@@ -100,7 +101,7 @@ pub use helpers::{
 pub use module::Module;
 pub use handlebars::Handlebars;
 
-pub use hyper::header::{Cookie, SetCookie, Headers, ContentLength, ContentType};
+pub use headers::{Cookie, SetCookie, ContentLength, ContentType};
 
 
 #[macro_use]

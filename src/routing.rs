@@ -5,11 +5,11 @@ use std::collections::HashSet;
 use regex::Regex;
 use regex::escape as regex_quote;
 
-use hyper::method::Method;
+use hyper::Method;
 
-use http_errors::{HTTPError, MethodNotAllowed, NotFound};
-use types::ViewArgs;
-use utils::join_string;
+use crate::http_errors::{HTTPError, MethodNotAllowed, NotFound};
+use crate::types::ViewArgs;
+use crate::utils::join_string;
 
 /// Parse a rule and return a list of tuples in the form
 /// `(Option<converter>, variable)`.  If the converter
@@ -105,7 +105,7 @@ impl<'a> From<&'a str> for Matcher {
 
         // Compiles the regular expression
         let mut regex_parts: Vec<String> = Vec::new();
-        for (converter, variable) in parse_rule(rule.trim_right_matches('/')) {
+        for (converter, variable) in parse_rule(rule.trim_end_matches('/')) {
             match converter {
                 Some(converter) => {
                     let re = match converter {
@@ -185,13 +185,13 @@ impl Rule {
         for method in methods.iter() {
             all_methods.insert(method.clone());
         }
-        if all_methods.contains(&Method::Get) {
-            all_methods.insert(Method::Head);
+        if all_methods.contains(&Method::GET) {
+            all_methods.insert(Method::HEAD);
         }
-        let provide_automatic_options = if all_methods.contains(&Method::Options) {
+        let provide_automatic_options = if all_methods.contains(&Method::OPTIONS) {
             false
         } else {
-            all_methods.insert(Method::Options);
+            all_methods.insert(Method::OPTIONS);
             true
         };
         Rule {
@@ -279,7 +279,7 @@ impl<'m> MapAdapter<'m> {
 
     fn make_redirect_url(&self) -> String {
         let mut redirect_path = String::from("");
-        redirect_path = redirect_path + &self.path.trim_left_matches('/') + "/";
+        redirect_path = redirect_path + &self.path.trim_start_matches('/') + "/";
         let mut suffix = String::from("");
         if let Some(ref query_string) = self.query_string {
             suffix = suffix + "?" + query_string;
@@ -355,14 +355,14 @@ impl<'m> MapAdapter<'m> {
 #[test]
 fn test_basic_routing() {
     let mut map = Map::new();
-    map.add(Rule::new("/".into(), &[Method::Get], "index"));
-    map.add(Rule::new("/foo".into(), &[Method::Get], "foo"));
-    map.add(Rule::new("/bar/".into(), &[Method::Get], "bar"));
-    let adapter = map.bind(String::from("localhost"), String::from("/bar/"), None, Method::Get);
+    map.add(Rule::new("/".into(), &[Method::GET], "index"));
+    map.add(Rule::new("/foo".into(), &[Method::GET], "foo"));
+    map.add(Rule::new("/bar/".into(), &[Method::GET], "bar"));
+    let adapter = map.bind(String::from("localhost"), String::from("/bar/"), None, Method::GET);
     match adapter.matched() {
         MapAdapterMatched::MatchedRule((rule, view_args)) => {
-            assert!(rule.methods.contains(&Method::Get));
-            assert!(!rule.methods.contains(&Method::Post));
+            assert!(rule.methods.contains(&Method::GET));
+            assert!(!rule.methods.contains(&Method::POST));
             assert!(rule.endpoint == String::from("bar"));
             assert!(view_args.len() == 0);
         },
