@@ -24,7 +24,7 @@ mime = "0.3"
 mime_guess = "2"
 hyper = "0.13"
 headers = "0.3"
-multipart = { version = "0.17", default-features = false, features = ["server", "hyper"] }
+multipart = { version = "0.17", default-features = false, features = ["server"] }
 lazycell = "1"
 time = "0.2"
 futures-util = "0.3.5"
