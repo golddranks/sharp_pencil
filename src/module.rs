@@ -40,7 +40,7 @@ pub struct Module {
     pub http_error_handlers: HashMap<u16, Box<HTTPErrorHandler>>,
     #[doc(hidden)]
     pub user_error_handlers: HashMap<String, Box<UserErrorHandler>>,
-    deferred_functions: Vec<Box<Fn(&mut Pencil) + Send + Sync>>,
+    deferred_functions: Vec<Box<dyn Fn(&mut Pencil) + Send + Sync>>,
     deferred_routes: Vec<(Matcher, Vec<Method>, String, ViewFunc)>,
 }
 

@@ -4,7 +4,6 @@ use std::convert::Into;
 use std::sync::RwLock;
 use std::fmt;
 use std::collections::HashMap;
-use std::error::Error;
 use std::fs::File;
 use std::path::PathBuf;
 use std::net::ToSocketAddrs;
@@ -72,7 +71,7 @@ pub struct Pencil {
     /// For storing arbitrary types as "static" data.
     pub extensions: ShareMap,
     /// The Handlebars registry used to load templates and register helpers.
-    pub handlebars_registry: RwLock<Box<Handlebars>>,
+    pub handlebars_registry: RwLock<Box<Handlebars<'static>>>,
     /// The url map for this pencil application.
     pub url_map: Map,
     /// All the attached modules in a hashmap by name.
@@ -521,7 +520,7 @@ impl Pencil {
 
     /// Logs an error.
     fn log_error(&self, request: &Request, e: &PencilError) {
-        error!("Error on {} [{}]: {}", request.path(), request.method(), e.description());
+        error!("Error on {} [{}]: {}", request.path(), request.method(), e);
     }
 
     /// Dispatches the request and performs request pre and postprocessing

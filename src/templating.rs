@@ -4,7 +4,6 @@ use std::io::Read;
 use std::io::Result as IOResult;
 use std::fs::File;
 use std::path::PathBuf;
-use std::error::Error;
 
 use serde::Serialize;
 use handlebars::{RenderError, TemplateRenderError};
@@ -15,13 +14,13 @@ use wrappers::Response;
 
 impl convert::From<RenderError> for PencilError {
     fn from(err: RenderError) -> PencilError {
-        PenUserError(UserError::new(err.description()))
+        PenUserError(UserError::new(err.to_string()))
     }
 }
 
 impl convert::From<TemplateRenderError> for PencilError {
     fn from(err: TemplateRenderError) -> PencilError {
-        PenUserError(UserError::new(err.description()))
+        PenUserError(UserError::new(err.to_string()))
     }
 }
 
@@ -33,7 +32,7 @@ pub fn render_template<T: Serialize>(app: &Pencil, template_name: &str, context:
         return Err(PenUserError(UserError::new("Can't acquire handlebars registry")));
     }
     let registry = registry_read_rv.unwrap();
-    let rv = try!(registry.render(template_name, context));
+    let rv = registry.render(template_name, context)?;
     Ok(Response::from(rv))
 }
 
@@ -45,7 +44,7 @@ pub fn render_template_string<T: Serialize>(app: &Pencil, source: &str, context:
         return Err(PenUserError(UserError::new("Can't acquire handlebars registry")));
     }
     let registry = registry_read_rv.unwrap();
-    let rv = try!(registry.template_render(source, context));
+    let rv = registry.render_template(source, context)?;
     Ok(Response::from(rv))
 }
 

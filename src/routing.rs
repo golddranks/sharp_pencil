@@ -105,7 +105,7 @@ impl<'a> From<&'a str> for Matcher {
 
         // Compiles the regular expression
         let mut regex_parts: Vec<String> = Vec::new();
-        for (converter, variable) in parse_rule(rule.trim_right_matches('/')) {
+        for (converter, variable) in parse_rule(rule.trim_end_matches('/')) {
             match converter {
                 Some(converter) => {
                     let re = match converter {
@@ -279,7 +279,7 @@ impl<'m> MapAdapter<'m> {
 
     fn make_redirect_url(&self) -> String {
         let mut redirect_path = String::from("");
-        redirect_path = redirect_path + &self.path.trim_left_matches('/') + "/";
+        redirect_path = redirect_path + &self.path.trim_start_matches('/') + "/";
         let mut suffix = String::from("");
         if let Some(ref query_string) = self.query_string {
             suffix = suffix + "?" + query_string;

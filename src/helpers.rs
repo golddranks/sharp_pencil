@@ -1,6 +1,5 @@
 //! This module implements various helpers.
 
-use std::error::Error;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
@@ -113,7 +112,7 @@ pub fn send_file(filepath: &str, mimetype: Mime, as_attachment: bool) -> PencilR
     let file = match File::open(&filepath) {
         Ok(file) => file,
         Err(e) => {
-            return Err(UserError::new(format!("couldn't open {}: {}", filepath.display(), e.description())).into());
+            return Err(UserError::new(format!("couldn't open {}: {}", filepath.display(), e)).into());
         }
     };
     let mut response: Response = file.into();
@@ -156,7 +155,7 @@ pub fn send_file_range(filepath: &str, mimetype: Mime, as_attachment: bool, rang
     let mut file = match File::open(&filepath) {
         Ok(file) => file,
         Err(e) => {
-            return Err(UserError::new(format!("couldn't open {}: {}", filepath.display(), e.description())).into());
+            return Err(UserError::new(format!("couldn't open {}: {}", filepath.display(), e)).into());
         }
     };
 
