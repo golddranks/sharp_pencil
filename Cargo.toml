@@ -1,6 +1,6 @@
 [package]
 name = "sharp_pencil"
-version = "0.4.5"
+version = "0.5.0"
 authors = ["Shipeng Feng <fsp261@gmail.com>", "Pyry Kontio <pyry.kontio@drasa.eu>"]
 keywords = ["web", "framework", "server", "http"]
 license = "BSD-3-Clause"
