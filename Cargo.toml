@@ -22,11 +22,6 @@ typemap = "0.3.3"
 mime = "0.2.2"
 mime_guess = "1.8.0"
 hyper = "0.10"
-formdata = "0.12.0"
+formdata = "0.13.0"
 lazycell = "1.3.0"
 time = "0.1"
-
-[patch.crates-io]
-formdata = { git = "https://github.com/golddranks/formdata" }
-mime_multipart = { git = "https://github.com/golddranks/mime-multipart", branch = "update_temporary" }
-textnonce = { git = "https://github.com/golddranks/textnonce" }
