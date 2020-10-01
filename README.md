@@ -1,4 +1,6 @@
-#Sharp Pencil (A Pencil fork)
+# Sharp Pencil
+
+This is a Rust sync web framework, developed circa 2016. It's a fork of unmaintained framework [Pencil](https://github.com/fengsp/pencil/).
 
 [![Build Status](https://travis-ci.org/fengsp/pencil.svg?branch=master)](https://travis-ci.org/fengsp/pencil) [![Crates.io Version](https://img.shields.io/crates/v/pencil.svg)](https://crates.io/crates/pencil/) [![Crates.io LICENSE](https://img.shields.io/crates/l/pencil.svg)](https://crates.io/crates/pencil/)
 
