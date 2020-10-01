@@ -1,6 +1,6 @@
 # Sharp Pencil
 
-This is a web framework in syncronous Rust, based on [Hyper 0.10](https://docs.rs/hyper/0.10.16/hyper/index.html) and originally developed circa 2016. It's a fork of unmaintained framework [Pencil](https://github.com/fengsp/pencil/).
+This is a web framework in syncronous Rust, based on [Hyper 0.10](https://docs.rs/hyper/0.10.16/hyper/index.html) and originally developed circa 2016. It's a fork of unmaintained framework [Pencil](https://github.com/fengsp/pencil/). The origin of this fork can be traced to this message: https://github.com/fengsp/pencil/issues/49
 
 [![Build Status](https://travis-ci.org/fengsp/pencil.svg?branch=master)](https://travis-ci.org/fengsp/pencil) [![Crates.io Version](https://img.shields.io/crates/v/pencil.svg)](https://crates.io/crates/pencil/) [![Crates.io LICENSE](https://img.shields.io/crates/l/pencil.svg)](https://crates.io/crates/pencil/)
 
