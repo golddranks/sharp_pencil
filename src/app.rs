@@ -66,6 +66,8 @@ pub struct Pencil {
     /// The folder that contains the templates that should be used for the application.
     /// Defaults to `''templates''` folder in the root path of the application.
     pub template_folder: String,
+    /// Whether live-loading of templates is enabled or not
+    pub template_debug: bool,
     /// The configuration for this application.
     pub config: Config,
     /// For storing arbitrary types as "static" data.
@@ -113,6 +115,7 @@ impl Pencil {
             static_folder: String::from("static"),
             static_url_path: String::from("/static"),
             template_folder: String::from("templates"),
+            template_debug: false,
             config: default_config(),
             extensions: ShareMap::custom(),
             handlebars_registry: RwLock::new(Box::new(Handlebars::new())),
