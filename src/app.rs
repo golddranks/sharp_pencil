@@ -1,6 +1,6 @@
 //! This module implements the central application object.
 
-use std::convert::Into;
+use std::{convert::Into, sync::Arc};
 use std::sync::RwLock;
 use std::fmt;
 use std::collections::HashMap;
@@ -73,7 +73,7 @@ pub struct Pencil {
     /// For storing arbitrary types as "static" data.
     pub extensions: ShareMap,
     /// The Handlebars registry used to load templates and register helpers.
-    pub handlebars_registry: RwLock<Box<Handlebars<'static>>>,
+    pub handlebars_registry: Arc<RwLock<Handlebars<'static>>>,
     /// The url map for this pencil application.
     pub url_map: Map,
     /// All the attached modules in a hashmap by name.
@@ -118,7 +118,7 @@ impl Pencil {
             template_debug: false,
             config: default_config(),
             extensions: ShareMap::custom(),
-            handlebars_registry: RwLock::new(Box::new(Handlebars::new())),
+            handlebars_registry: Arc::new(RwLock::new(Handlebars::new())),
             url_map: Map::new(),
             modules: HashMap::new(),
             view_functions: HashMap::new(),
@@ -154,6 +154,12 @@ impl Pencil {
     /// enable the test mode of the application.
     pub fn set_testing(&mut self, flag: bool) {
         self.config.set("TESTING", Value::Bool(flag));
+    }
+
+    /// Set the template debug flag. This makes the templates
+    /// live-reload every time they are rendered.
+    pub fn set_template_debug(&mut self, flag: bool) {
+        self.template_debug = flag;
     }
 
     /// Set global log level based on the application's debug flag.

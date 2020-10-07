@@ -60,6 +60,7 @@ extern crate mime;
 extern crate mime_guess;
 extern crate lazycell;
 extern crate time;
+extern crate notify;
 
 /* public api */
 pub use app::Pencil;

@@ -27,11 +27,6 @@ impl convert::From<TemplateRenderError> for PencilError {
 pub fn render_template<T: Serialize>(app: &Pencil, template_name: &str, context: &T)
     -> PencilResult
 {
-    if app.template_debug {
-        let mut wr = app.handlebars_registry.write().unwrap();
-        let tmpl = load_template(app, template_name).unwrap().unwrap();
-        wr.register_template_string(template_name, tmpl).unwrap();
-    }
     let registry_read_rv = app.handlebars_registry.read();
     if registry_read_rv.is_err() {
         return Err(PenUserError(UserError::new("Can't acquire handlebars registry")));
